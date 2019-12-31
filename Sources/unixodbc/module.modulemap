@@ -1,0 +1,5 @@
+module unixodbc {
+    header "unixodbc.h"
+    link "odbc"
+    export *
+}
