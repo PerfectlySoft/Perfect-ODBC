@@ -24,6 +24,10 @@ public class ODBCConnection {
 	public static func datasources() -> [String] {
 		let currDsName = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 1024)
 		let desc = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 1024)
+		defer {
+			currDsName.deallocate()
+			desc.deallocate()
+		}
 		var realLen: SQLSMALLINT = 0
 		var descLen: SQLSMALLINT = 0
 		var ret: [String] = []
@@ -71,6 +75,9 @@ public class ODBCConnection {
 	
 	private func getInfo(_ type: Int32) -> String? {
 		let s = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 1024)
+		defer {
+			s.deallocate()
+		}
 		var len: SQLSMALLINT = 0
 		SQLGetInfo(hdbc, SQLUSMALLINT(type), s.baseAddress, SQLSMALLINT(s.count), &len)
 		guard let str = String(bytes: s[0..<Int(len)], encoding: .utf8) else {
@@ -119,6 +126,9 @@ public class ODBCConnection {
 		}
 		if SQL_SUCCEEDED(SQLTables(stat, nil, 0, nil, 0, nil, 0, nil, 0)) {
 			let name = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 1024)
+			defer {
+				name.deallocate()
+			}
 			var nameLen: SQLLEN = 0
 			SQLBindCol(stat, 3, SQLSMALLINT(SQL_C_CHAR), name.baseAddress, name.count, &nameLen)
 			
@@ -158,6 +168,10 @@ public class ODBCConnection {
 			let maxMsgSize = 256
 			let sqlState = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 6)
 			let errMsg = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: maxMsgSize)
+			defer {
+				sqlState.deallocate()
+				errMsg.deallocate()
+			}
 			var errCode: SQLINTEGER = 0
 			var errorSize: SQLSMALLINT = 0
 			
