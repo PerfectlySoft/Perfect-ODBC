@@ -21,10 +21,7 @@ public class ODBCConnection {
 		return true
 	}()
 	
-	var henv: SQLHENV?
-	var hdbc: SQLHDBC?
-	
-	static func datasources() -> [String] {
+	public static func datasources() -> [String] {
 		let currDsName = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 1024)
 		let desc = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 1024)
 		var realLen: SQLSMALLINT = 0
@@ -39,20 +36,47 @@ public class ODBCConnection {
 		}
 		
 		if SQL_SUCCEEDED(SQLDataSources(henv, SQLUSMALLINT(SQL_FETCH_FIRST),
-										 currDsName.baseAddress, SQLSMALLINT(currDsName.count), &realLen,
-										 desc.baseAddress, SQLSMALLINT(desc.count), &descLen)) {
+										currDsName.baseAddress, SQLSMALLINT(currDsName.count), &realLen,
+										desc.baseAddress, SQLSMALLINT(desc.count), &descLen)) {
 			if let s = String(bytes: currDsName[0..<Int(realLen)], encoding: .utf8) {
 				ret.append(s)
 			}
 			while SQL_SUCCEEDED(SQLDataSources(henv, SQLUSMALLINT(SQL_FETCH_NEXT),
 											   currDsName.baseAddress, SQLSMALLINT(currDsName.count), &realLen,
 											   desc.baseAddress, SQLSMALLINT(desc.count), &descLen)) {
-				if let s = String(bytes: currDsName[0..<Int(realLen)], encoding: .utf8) {
-					ret.append(s)
-				}
+												if let s = String(bytes: currDsName[0..<Int(realLen)], encoding: .utf8) {
+													ret.append(s)
+												}
 			}
 		}
 		return ret
+	}
+	
+	var henv: SQLHENV?
+	var hdbc: SQLHDBC?
+	
+	public var driverVersion: String? {
+		return getInfo(SQL_DRIVER_VER)
+	}
+	public var serverVersion: String? {
+		return getInfo(SQL_DBMS_VER)
+	}
+	public var serverName: String? {
+		return getInfo(SQL_DBMS_NAME)
+	}
+	public var isAlive: Bool {
+		var val: SQLUINTEGER = 0
+		return SQL_SUCCEEDED(SQLGetConnectAttr(hdbc, SQL_ATTR_CONNECTION_DEAD, &val, SQL_IS_UINTEGER, nil)) && SQL_CD_TRUE != val
+	}
+	
+	private func getInfo(_ type: Int32) -> String? {
+		let s = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 1024)
+		var len: SQLSMALLINT = 0
+		SQLGetInfo(hdbc, SQLUSMALLINT(type), s.baseAddress, SQLSMALLINT(s.count), &len)
+		guard let str = String(bytes: s[0..<Int(len)], encoding: .utf8) else {
+			return nil
+		}
+		return str
 	}
 	
 	deinit {
@@ -65,7 +89,7 @@ public class ODBCConnection {
 		}
 	}
 	
-	init(dsn: String, user: String, pass: String) throws {
+	public init(dsn: String, user: String, pass: String) throws {
 		_ = ODBCConnection.gInit
 		try check(SQLAllocHandle(SQLSMALLINT(SQL_HANDLE_ENV), nil, &henv))
 		SQLSetEnvAttr(henv, _SQL_ATTR_ODBC_VERSION, _SQL_OV_ODBC3, 0)
@@ -84,26 +108,7 @@ public class ODBCConnection {
 		
 	}
 	
-	func check(_ code: SQLRETURN) throws {
-		guard SQL_SUCCEEDED(code) else {
-			let maxMsgSize = 256
-			let sqlState = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 6)
-			let errMsg = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: maxMsgSize)
-			var errCode: SQLINTEGER = 0
-			var errorSize: SQLSMALLINT = 0
-			
-			SQLError(henv, hdbc, nil,
-					 sqlState.baseAddress,
-					 &errCode,
-					 errMsg.baseAddress,
-					 SQLSMALLINT(maxMsgSize),
-					 &errorSize)
-			let msgStr = "[\(String(bytes: sqlState[0..<5], encoding: .utf8) ?? "")]\(String(bytes: errMsg[0..<Int(errorSize)], encoding: .utf8) ?? "")"
-			throw ODBCError.error(msgStr)
-		}
-	}
-	
-	func tables() throws -> [String] {
+	public func tables() throws -> [String] {
 		var ret: [String] = []
 		var stat: SQLHSTMT?
 		guard SQL_SUCCEEDED(SQLAllocHandle(SQLSMALLINT(SQL_HANDLE_STMT), hdbc, &stat)) else {
@@ -124,6 +129,57 @@ public class ODBCConnection {
 			}
 		}
 		return ret
+	}
+	
+	public func commit() throws {
+		try check(SQLEndTran(SQLSMALLINT(SQL_HANDLE_DBC), hdbc, SQLSMALLINT(SQL_COMMIT)))
+	}
+	
+	public func rollback() throws {
+		try check(SQLEndTran(SQLSMALLINT(SQL_HANDLE_DBC), hdbc, SQLSMALLINT(SQL_ROLLBACK)))
+	}
+	
+	public func prepare(statement: String) throws -> ODBCStmt {
+		var hstmt: SQLHSTMT?
+		try check(SQLAllocHandle(SQLSMALLINT(SQL_HANDLE_STMT), hdbc, &hstmt))
+		let stat = ODBCStmt(hstmt) // owns/frees the handle
+		var statement = statement
+		try check(statement.withUTF8 {
+			s in
+			return SQLPrepare(hstmt,
+							  UnsafeMutablePointer<UInt8>(mutating: s.baseAddress),
+							  SQLINTEGER(s.count))
+		})
+		return stat
+	}
+	
+	func check(_ code: SQLRETURN) throws {
+		guard SQL_SUCCEEDED(code) else {
+			let maxMsgSize = 256
+			let sqlState = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 6)
+			let errMsg = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: maxMsgSize)
+			var errCode: SQLINTEGER = 0
+			var errorSize: SQLSMALLINT = 0
+			
+			SQLError(henv, hdbc, nil,
+					 sqlState.baseAddress,
+					 &errCode,
+					 errMsg.baseAddress,
+					 SQLSMALLINT(maxMsgSize),
+					 &errorSize)
+			let msgStr = "[\(String(bytes: sqlState[0..<5], encoding: .utf8) ?? "")]\(String(bytes: errMsg[0..<Int(errorSize)], encoding: .utf8) ?? "")"
+			throw ODBCError.error(msgStr)
+		}
+	}
+}
+
+public class ODBCStmt {
+	var hstmt: SQLHSTMT?
+	deinit {
+		SQLFreeHandle(SQLSMALLINT(SQL_HANDLE_STMT), hstmt)
+	}
+	init(_ hstmt: SQLHSTMT?) {
+		self.hstmt = hstmt
 	}
 }
 
