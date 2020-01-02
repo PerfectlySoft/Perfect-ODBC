@@ -5,7 +5,8 @@ import XCTest
 
 class PerfectODBCTests: XCTestCase {
     func testConnection() throws {
-        let c = try ODBCConnection(dsn: "PostgreSQL", user: "postgres", pass: "")
+		let env = ODBCEnvironment()
+		let c = try env.connect(dsn: "PostgreSQL", user: "postgres", pass: "")
 		XCTAssertTrue(c.isAlive)
 		let a = try c.tables()
 		print("\(a)")
@@ -15,7 +16,7 @@ class PerfectODBCTests: XCTestCase {
     }
 
 	func testDataSources() {
-		let a = ODBCConnection.datasources()
+		let a = ODBCEnvironment().datasources()
 		print("\(a)")
 	}
 }
