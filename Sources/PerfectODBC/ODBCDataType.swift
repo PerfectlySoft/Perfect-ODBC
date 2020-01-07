@@ -8,13 +8,14 @@
 import Foundation
 import unixodbc
 
-public enum ODBCColumnType: RawRepresentable {
+public enum ODBCDataType: RawRepresentable {
 	case char, varchar, longvarchar, wchar, wvarchar, wlongvarchar, decimal, numeric, smallint,
 		integer, real, float, double, bit, tinyint, bigint, binary, varbinary, longvarbinary,
 		date, time, timestamp, intervalmonth, intervalyear, intervalyeartomonth,
 		intervalday, intervalhour, intervalminute, intervalsecond, intervaldaytohour,
 		intervaldaytominute, intervaldaytosecond, intervalhourtominute,
 		intervalhourtosecond, intervalminutetosecond, guid
+	case cdefault, csbigint, cubigint, cslong, culong, csshort, cushort, cstinyint, cutinyint
 	case unknown
 	
 	public typealias RawValue = Int16
@@ -56,6 +57,15 @@ public enum ODBCColumnType: RawRepresentable {
 			case _SQL_INTERVAL_HOUR_TO_SECOND: self = .intervalhourtosecond
 			case _SQL_INTERVAL_MINUTE_TO_SECOND: self = .intervalminutetosecond
 			case _SQL_GUID: self = .guid
+			case _SQL_C_DEFAULT: self = .cdefault
+			case _SQL_C_SBIGINT: self = .csbigint
+			case _SQL_C_UBIGINT: self = .cubigint
+			case _SQL_C_SLONG: self = .cslong
+			case _SQL_C_ULONG: self = .culong
+			case _SQL_C_SSHORT: self = .csshort
+			case _SQL_C_USHORT: self = .cushort
+			case _SQL_C_STINYINT: self = .cstinyint
+			case _SQL_C_UTINYINT: self = .cutinyint
 			default: self = .unknown
 		}
 	}
@@ -97,7 +107,16 @@ public enum ODBCColumnType: RawRepresentable {
 			case .intervalhourtosecond: return _SQL_INTERVAL_HOUR_TO_SECOND
 			case .intervalminutetosecond: return _SQL_INTERVAL_MINUTE_TO_SECOND
 			case .guid: return _SQL_GUID
+			case .cdefault: return _SQL_C_DEFAULT
 			case .unknown: return _SQL_UNKNOWN_TYPE
+			case .csbigint: return _SQL_C_SBIGINT
+			case .cubigint: return _SQL_C_UBIGINT
+			case .cslong: return _SQL_C_SLONG
+			case .culong: return _SQL_C_ULONG
+			case .csshort: return _SQL_C_SSHORT
+			case .cushort: return _SQL_C_USHORT
+			case .cstinyint: return _SQL_C_STINYINT
+			case .cutinyint: return _SQL_C_UTINYINT
 		}
 	}
 }

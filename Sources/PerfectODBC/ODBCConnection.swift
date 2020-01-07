@@ -112,10 +112,11 @@ public class ODBCConnection: ODBCHandle {
 		})
 		return stat
 	}
+	@discardableResult
 	public func execute(statement: String) throws -> ODBCStatement {
 		let stat = try ODBCStatement(con: self)
 		var statement = statement
-		try check(statement.withUTF8 {
+		try stat.check(statement.withUTF8 {
 			s in
 			return SQLExecDirect(stat.hstmt,
 							  UnsafeMutablePointer<UInt8>(mutating: s.baseAddress),

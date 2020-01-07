@@ -10,7 +10,13 @@ func SQL_SUCCEEDED(_ code: SQLRETURN) -> Bool {
 	return (((code) & (~1)) == 0)
 }
 
-public enum ODBCError : Error {
+public enum ODBCError : Error, CustomStringConvertible {
+	public var description: String {
+		switch self {
+		case .error(let s):
+			return s
+		}
+	}
 	/// Error with detail message.
 	case error(String)
 }
