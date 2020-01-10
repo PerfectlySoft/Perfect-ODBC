@@ -81,29 +81,6 @@ extension ODBCStatement {
 	public func cancel() throws {
 		try check(SQLCancel(hstmt))
 	}
-	public func execute() throws {
-		var rc = SQLExecute(hstmt)
-		var ptr: SQLPOINTER? = nil
-		while rc == SQL_NEED_DATA {
-			rc = SQLParamData(hstmt, &ptr)
-			if rc == SQL_NEED_DATA {
-				guard let ptrBang = ptr,
-					let value = bindAtExec[Int(bitPattern: ptrBang)] else {
-					throw ODBCError.error("Could not find bound parameter")
-				}
-				switch value.value {
-				case var value as String:
-					try check(value.withUTF8 {
-						SQLPutData(hstmt, SQLPOINTER(mutating: $0.baseAddress), $0.count)
-					})
-				default:
-					throw ODBCError.error("Unusable bound parameter type")
-				}
-				rc = SQLParamData(hstmt, &ptr)
-			}
-		}
-		try check(rc)
-	}
 	public func numParams() throws -> Int {
 		var num: SQLSMALLINT = 0
 		try check(SQLNumParams(hstmt, &num))
@@ -204,6 +181,36 @@ extension ODBCStatement {
 }
 
 extension ODBCStatement {
+	public func execute() throws {
+		var rc = SQLExecute(hstmt)
+		var ptr: SQLPOINTER? = nil
+		while rc == SQL_NEED_DATA {
+			rc = SQLParamData(hstmt, &ptr)
+			if rc == SQL_NEED_DATA {
+				guard let ptrBang = ptr,
+					let value = bindAtExec[Int(bitPattern: ptrBang)] else {
+					throw ODBCError.error("Could not find bound parameter")
+				}
+				switch value.value {
+				case var value as String:
+					try check(value.withUTF8 {
+						SQLPutData(hstmt, SQLPOINTER(mutating: $0.baseAddress), $0.count)
+					})
+				case var value as [UInt8]:
+					try check(SQLPutData(hstmt, &value, value.count))
+				case var value as [Int8]:
+					try check(SQLPutData(hstmt, &value, value.count))
+				default:
+					throw ODBCError.error("Unusable bound parameter type")
+				}
+				rc = SQLParamData(hstmt, &ptr)
+			}
+		}
+		try check(rc)
+	}
+}
+
+extension ODBCStatement {
 	private func bindNull(number: Int, valueType: ODBCDataType, paramType: ODBCDataType) throws {
 		if let b = bindValues {
 			try b.advanced(by: number-1).withMemoryRebound(to: Int.self, capacity: 1) {
@@ -223,25 +230,65 @@ extension ODBCStatement {
 	}
 	
 	public func bindParameter(number: Int, value: String?) throws {
-		if var value = value, let b = bindValues {
+		if let value = value, let b = bindValues {
 			let b = b.advanced(by: number-1)
 			b.withMemoryRebound(to: Int.self, capacity: 1) {
 				p in
-				value.withUTF8 {
-					u in
-					p.initialize(to: Int(_SQL_LEN_DATA_AT_EXEC(Int32(u.count))))
-				}
+				p.initialize(to: Int(SQL_DATA_AT_EXEC)) // should check if driver requires length
+														// if so, perform the below instead
+//				value.withUTF8 {
+//					u in
+//					p.initialize(to: Int(_SQL_LEN_DATA_AT_EXEC(Int32(u.count))))
+//				}
 			}
 			bindAtExec[number] = .init(value: value, type: .varchar)
 			try check(SQLBindParameter(hstmt,
 										SQLUSMALLINT(number),
 										SQLSMALLINT(SQL_PARAM_INPUT),
-										ODBCDataType.cdefault.rawValue,
+										ODBCDataType.cdefault.rawValue, // pgsql driver, at least, requires this
 										ODBCDataType.longvarchar.rawValue,
 										0, 0,
 										SQLPOINTER(bitPattern: number), 0, b))
 		} else {
-			try bindNull(number: number, valueType: .varchar, paramType: .varchar)
+			try bindNull(number: number, valueType: .cdefault, paramType: .longvarchar)
+		}
+	}
+	public func bindParameter(number: Int, value: [UInt8]?) throws {
+		if let value = value, let b = bindValues {
+			let b = b.advanced(by: number-1)
+			b.withMemoryRebound(to: Int.self, capacity: 1) {
+				p in
+				p.initialize(to: Int(SQL_DATA_AT_EXEC))
+			}
+			bindAtExec[number] = .init(value: value, type: .longvarchar)
+			try check(SQLBindParameter(hstmt,
+										SQLUSMALLINT(number),
+										SQLSMALLINT(SQL_PARAM_INPUT),
+										ODBCDataType.cdefault.rawValue,
+										ODBCDataType.longvarbinary.rawValue,
+										0, 0,
+										SQLPOINTER(bitPattern: number), 0, b))
+		} else {
+			try bindNull(number: number, valueType: .cdefault, paramType: .longvarbinary)
+		}
+	}
+	public func bindParameter(number: Int, value: [Int8]?) throws {
+		if let value = value, let b = bindValues {
+			let b = b.advanced(by: number-1)
+			b.withMemoryRebound(to: Int.self, capacity: 1) {
+				p in
+				p.initialize(to: Int(SQL_DATA_AT_EXEC))
+			}
+			bindAtExec[number] = .init(value: value, type: .longvarchar)
+			try check(SQLBindParameter(hstmt,
+										SQLUSMALLINT(number),
+										SQLSMALLINT(SQL_PARAM_INPUT),
+										ODBCDataType.cdefault.rawValue,
+										ODBCDataType.longvarbinary.rawValue,
+										0, 0,
+										SQLPOINTER(bitPattern: number), 0, b))
+		} else {
+			try bindNull(number: number, valueType: .cdefault, paramType: .longvarbinary)
 		}
 	}
 	
