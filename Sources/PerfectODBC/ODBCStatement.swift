@@ -9,6 +9,23 @@ import Foundation
 import unixodbc
 
 public class ODBCStatement: ODBCHandle {
+	struct BoundParameter {
+		let value: Any
+		let type: ODBCDataType
+	}
+	var bindAtExec: [Int:BoundParameter] = [:]
+	var _bindValues: UnsafeMutablePointer<SQLLEN>?
+	var bindValues: UnsafeMutablePointer<SQLLEN>? {
+		if let bv = _bindValues {
+			return bv
+		}
+		let paramCount: Int = try! numParams()
+		if paramCount > 0 {
+			_bindValues = .allocate(capacity: paramCount)
+		}
+		return _bindValues
+	}
+	
 	public enum FetchResult {
 		case success, noData, stillExecuting
 	}
@@ -30,18 +47,59 @@ public class ODBCStatement: ODBCHandle {
 	init(con: ODBCConnection) throws {
 		self.connection = con
 		super.init(type: SQL_HANDLE_STMT)
-		try check(SQLAllocHandle(type, hdbc, &handle))
+		try check(SQLAllocHandle(handleType, hdbc, &handle))
 	}
+	deinit {
+		if let bvals = _bindValues {
+			bvals.deallocate()
+		}
+	}
+	func check(_ code: SQLRETURN) throws {
+		guard SQL_SUCCEEDED(code) else {
+			let maxMsgSize = bigNameLen
+			let sqlState = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 6)
+			let errMsg = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: maxMsgSize)
+			defer {
+				sqlState.deallocate()
+				errMsg.deallocate()
+			}
+			var errCode: SQLINTEGER = 0
+			var errorSize: SQLSMALLINT = 0
+			SQLError(henv, hdbc, hstmt,
+					 sqlState.baseAddress,
+					 &errCode,
+					 errMsg.baseAddress,
+					 SQLSMALLINT(maxMsgSize),
+					 &errorSize)
+			let msgStr = "[\(String(bytes: sqlState[0..<5], encoding: .utf8) ?? "")]\(String(bytes: errMsg[0..<Int(errorSize)], encoding: .utf8) ?? "")"
+			throw ODBCError.error(msgStr)
+		}
+	}
+}
+
+extension ODBCStatement {
 	public func cancel() throws {
 		try check(SQLCancel(hstmt))
 	}
 	public func execute() throws {
-		try check(SQLExecute(hstmt))
+		let rc = SQLExecute(hstmt)
+		if rc == SQL_NEED_DATA {
+			
+		}
+		try check(rc)
+	}
+	public func numParams() throws -> Int {
+		var num: SQLSMALLINT = 0
+		try check(SQLNumParams(hstmt, &num))
+		return Int(num)
 	}
 	public func rowCount() throws -> Int {
 		var count: SQLLEN = 0
 		try check(SQLRowCount(hstmt, &count))
 		return Int(count)
+	}
+	public func closeCursor() throws {
+		try check(SQLCloseCursor(hstmt))
 	}
 	public func fetch() throws -> FetchResult {
 		let rc = SQLFetch(hstmt)
@@ -78,11 +136,6 @@ public class ODBCStatement: ODBCHandle {
 		try check(SQLNumResultCols(hstmt, &num))
 		return Int(num)
 	}
-	public func numParams() throws -> Int {
-		var num: SQLSMALLINT = 0
-		try check(SQLNumParams(hstmt, &num))
-		return Int(num)
-	}
 	// 1 based
 	public func describeColumn(number: Int) throws -> ColumnDescription {
 		let name = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: bigNameLen)
@@ -110,6 +163,196 @@ public class ODBCStatement: ODBCHandle {
 					 digits: Int(decimalDigits),
 					 nullable: nullable == SQL_NULLABLE)
 	}
+}
+
+// internal - user-facing prep & execute go through connection obj
+extension ODBCStatement {
+	func prepare(statement: String) throws {
+		var statement = statement
+		try check(statement.withUTF8 {
+			s in
+			return SQLPrepare(hstmt,
+							  UnsafeMutablePointer<UInt8>(mutating: s.baseAddress),
+							  SQLINTEGER(s.count))
+		})
+	}
+	func execute(statement: String) throws {
+		var statement = statement
+		try check(statement.withUTF8 {
+			s in
+			return SQLExecDirect(hstmt,
+							  UnsafeMutablePointer<UInt8>(mutating: s.baseAddress),
+							  SQLINTEGER(s.count))
+		})
+	}
+}
+
+extension ODBCStatement {
+	private func bindNull(number: Int, valueType: ODBCDataType, paramType: ODBCDataType) throws {
+		if let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: Int.self, capacity: 1) {
+				p in
+				p.initialize(to: SQLLEN(SQL_NULL_DATA))
+				try bind(number: number, valueType: valueType, paramType: paramType, ptr: p)
+			}
+		}
+	}
+	private func bind(number: Int, valueType: ODBCDataType, paramType: ODBCDataType, ptr: SQLPOINTER) throws {
+		try check(SQLBindParameter(hstmt,
+								   SQLUSMALLINT(number),
+								   SQLSMALLINT(SQL_PARAM_INPUT),
+								   valueType.rawValue,
+								   paramType.rawValue,
+								   0, 0, ptr, 0, nil))
+	}
+	
+	public func bindParameter(number: Int, value: String?) throws {
+		if let value = value, let b = bindValues {
+			let b = b.advanced(by: number-1)
+			b.withMemoryRebound(to: Int32.self, capacity: 1) {
+				$0.initialize(to: (SQL_DATA_AT_EXEC))
+			}
+			bindAtExec[number] = .init(value: value, type: .varchar)
+			try check(SQLBindParameter(hstmt,
+										SQLUSMALLINT(number),
+										SQLSMALLINT(SQL_PARAM_INPUT),
+										ODBCDataType.varchar.rawValue,
+										ODBCDataType.varchar.rawValue,
+										0, 0,
+										SQLPOINTER(bitPattern: number), 0, b))
+		} else {
+			try bindNull(number: number, valueType: .varchar, paramType: .varchar)
+		}
+	}
+	
+	public func bindParameter(number: Int, value: Int64?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .csbigint, paramType: .bigint, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .csbigint, paramType: .bigint)
+		}
+	}
+	public func bindParameter(number: Int, value: UInt64?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .cubigint, paramType: .bigint, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .cubigint, paramType: .bigint)
+		}
+	}
+	public func bindParameter(number: Int, value: Int?) throws {
+		if let v = value {
+			try bindParameter(number: number, value: Int64(v))
+		} else {
+			try bindNull(number: number, valueType: .csbigint, paramType: .bigint)
+		}
+	}
+	public func bindParameter(number: Int, value: UInt?) throws {
+		if let v = value {
+			try bindParameter(number: number, value: UInt64(v))
+		} else {
+			try bindNull(number: number, valueType: .cubigint, paramType: .bigint)
+		}
+	}
+	public func bindParameter(number: Int, value: Int32?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .cslong, paramType: .integer, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .cslong, paramType: .integer)
+		}
+	}
+	public func bindParameter(number: Int, value: UInt32?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .culong, paramType: .integer, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .culong, paramType: .integer)
+		}
+	}
+	public func bindParameter(number: Int, value: Int16?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .csshort, paramType: .integer, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .csshort, paramType: .integer)
+		}
+	}
+	public func bindParameter(number: Int, value: UInt16?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .cushort, paramType: .integer, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .cushort, paramType: .integer)
+		}
+	}
+	public func bindParameter(number: Int, value: Int8?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .cutinyint, paramType: .char, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .cutinyint, paramType: .char)
+		}
+	}
+	public func bindParameter(number: Int, value: UInt8?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .cstinyint, paramType: .char, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .cstinyint, paramType: .char)
+		}
+	}
+	
+	public func bindParameter(number: Int, value: Double?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .double, paramType: .double, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .double, paramType: .double)
+		}
+	}
+	public func bindParameter(number: Int, value: Float?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
+				p in
+				p.initialize(to: value)
+				try bind(number: number, valueType: .float, paramType: .float, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .float, paramType: .float)
+		}
+	}
+}
+
+extension ODBCStatement {
 	public func getData(number: Int, buffer: UnsafeMutableRawBufferPointer, type: ODBCDataType = .cdefault) throws -> Int? {
 		var len: SQLLEN = 0
 		try check(SQLGetData(hstmt, SQLUSMALLINT(number), type.rawValue, buffer.baseAddress, buffer.count, &len))
@@ -241,26 +484,5 @@ public class ODBCStatement: ODBCHandle {
 			return nil
 		}
 		return UInt(truncatingIfNeeded: r)
-	}
-	func check(_ code: SQLRETURN) throws {
-		guard SQL_SUCCEEDED(code) else {
-			let maxMsgSize = bigNameLen
-			let sqlState = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: 6)
-			let errMsg = UnsafeMutableBufferPointer<SQLCHAR>.allocate(capacity: maxMsgSize)
-			defer {
-				sqlState.deallocate()
-				errMsg.deallocate()
-			}
-			var errCode: SQLINTEGER = 0
-			var errorSize: SQLSMALLINT = 0
-			SQLError(henv, hdbc, hstmt,
-					 sqlState.baseAddress,
-					 &errCode,
-					 errMsg.baseAddress,
-					 SQLSMALLINT(maxMsgSize),
-					 &errorSize)
-			let msgStr = "[\(String(bytes: sqlState[0..<5], encoding: .utf8) ?? "")]\(String(bytes: errMsg[0..<Int(errorSize)], encoding: .utf8) ?? "")"
-			throw ODBCError.error(msgStr)
-		}
 	}
 }

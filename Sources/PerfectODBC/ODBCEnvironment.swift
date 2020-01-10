@@ -17,7 +17,7 @@ public class ODBCEnvironment: ODBCHandle {
 	public init() {
 		_ = ODBCEnvironment.gInit
 		super.init(type: SQL_HANDLE_ENV)
-		SQLAllocHandle(type, nil, &handle)
+		SQLAllocHandle(handleType, nil, &handle)
 		SQLSetEnvAttr(henv, _SQL_ATTR_ODBC_VERSION, _SQL_OV_ODBC3, 0)
 	}
 	public func datasources() -> [String] {

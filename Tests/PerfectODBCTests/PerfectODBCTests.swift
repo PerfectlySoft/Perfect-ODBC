@@ -68,9 +68,51 @@ class PerfectODBCTests: XCTestCase {
 	func testParams() throws {
 		let env = ODBCEnvironment()
 		let c = try env.connect(dsn: "PostgreSQL", user: "postgres", pass: "")
-		let s = try c.prepare(statement: "INSERT INTO TestTable1 (id,name) VALUES (?,?)")
-		XCTAssertEqual(try s.numParams(), 2)
-		
+		do {
+			let s = try c.prepare(statement: "SELECT COUNT(*) FROM \"TestTable1\" WHERE \"int\" = ?")
+			XCTAssertEqual(try s.numParams(), 1)
+			try s.bindParameter(number: 1, value: 42)
+			try s.execute()
+			while case .success = try s.fetch() {
+				let colDesc = try s.describeColumn(number: 1)
+				print("\(colDesc)")
+				let id: Int? = try s.getData(number: 1)
+				XCTAssertEqual(id, 1)
+			}
+			try s.closeCursor()
+			try s.bindParameter(number: 1, value: nil as Int?)
+			try s.execute()
+			while case .success = try s.fetch() {
+				let colDesc = try s.describeColumn(number: 1)
+				print("\(colDesc)")
+				let id: Int? = try s.getData(number: 1)
+				XCTAssertEqual(id, 1)
+			}
+		}
+		do {
+			let s = try c.prepare(statement: "SELECT COUNT(*) FROM \"TestTable1\" WHERE name = ?")
+			XCTAssertEqual(try s.numParams(), 1)
+			try s.bindParameter(number: 1, value: "the name")
+			try s.execute()
+			while case .success = try s.fetch() {
+				let colDesc = try s.describeColumn(number: 1)
+				print("\(colDesc)")
+				let id: Int? = try s.getData(number: 1)
+				XCTAssertEqual(id, 1)
+			}
+		}
+		do {
+			let s = try c.prepare(statement: "SELECT COUNT(*) FROM \"TestTable1\" WHERE doub = ?")
+			XCTAssertEqual(try s.numParams(), 1)
+			try s.bindParameter(number: 1, value: 42.999)
+			try s.execute()
+			while case .success = try s.fetch() {
+				let colDesc = try s.describeColumn(number: 1)
+				print("\(colDesc)")
+				let id: Int? = try s.getData(number: 1)
+				XCTAssertEqual(id, 1)
+			}
+		}
 	}
 	
 	func testResultColumns() throws {

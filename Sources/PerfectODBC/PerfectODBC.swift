@@ -23,11 +23,11 @@ public enum ODBCError : Error, CustomStringConvertible {
 
 public class ODBCHandle {
 	var handle: SQLHANDLE?
-	let type: SQLSMALLINT
+	let handleType: SQLSMALLINT
 	deinit {
-		SQLFreeHandle(type, handle)
+		SQLFreeHandle(handleType, handle)
 	}
 	init(type: Int32) {
-		self.type = SQLSMALLINT(type)
+		self.handleType = SQLSMALLINT(type)
 	}
 }

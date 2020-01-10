@@ -18,7 +18,7 @@ public class ODBCConnection: ODBCHandle {
 	init(env: ODBCEnvironment, dsn: String, user: String, pass: String) throws {
 		self.environment = env
 		super.init(type: SQL_HANDLE_DBC)
-		try check(SQLAllocHandle(type, henv, &handle))
+		try check(SQLAllocHandle(handleType, henv, &handle))
 		var dsn = dsn, user = user, pass = pass
 		try check(dsn.withUTF8 { dbs in
 			return user.withUTF8 { us in
@@ -96,32 +96,20 @@ public class ODBCConnection: ODBCHandle {
 		}
 	}
 	public func commit() throws {
-		try check(SQLEndTran(type, hdbc, SQLSMALLINT(SQL_COMMIT)))
+		try check(SQLEndTran(handleType, hdbc, SQLSMALLINT(SQL_COMMIT)))
 	}
 	public func rollback() throws {
-		try check(SQLEndTran(type, hdbc, SQLSMALLINT(SQL_ROLLBACK)))
+		try check(SQLEndTran(handleType, hdbc, SQLSMALLINT(SQL_ROLLBACK)))
 	}
 	public func prepare(statement: String) throws -> ODBCStatement {
 		let stat = try ODBCStatement(con: self)
-		var statement = statement
-		try check(statement.withUTF8 {
-			s in
-			return SQLPrepare(stat.hstmt,
-							  UnsafeMutablePointer<UInt8>(mutating: s.baseAddress),
-							  SQLINTEGER(s.count))
-		})
+		try stat.prepare(statement: statement)
 		return stat
 	}
 	@discardableResult
 	public func execute(statement: String) throws -> ODBCStatement {
 		let stat = try ODBCStatement(con: self)
-		var statement = statement
-		try stat.check(statement.withUTF8 {
-			s in
-			return SQLExecDirect(stat.hstmt,
-							  UnsafeMutablePointer<UInt8>(mutating: s.baseAddress),
-							  SQLINTEGER(s.count))
-		})
+		try stat.execute(statement: statement)
 		return stat
 	}
 }
