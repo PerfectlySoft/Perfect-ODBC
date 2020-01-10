@@ -82,9 +82,25 @@ extension ODBCStatement {
 		try check(SQLCancel(hstmt))
 	}
 	public func execute() throws {
-		let rc = SQLExecute(hstmt)
-		if rc == SQL_NEED_DATA {
-			
+		var rc = SQLExecute(hstmt)
+		var ptr: SQLPOINTER? = nil
+		while rc == SQL_NEED_DATA {
+			rc = SQLParamData(hstmt, &ptr)
+			if rc == SQL_NEED_DATA {
+				guard let ptrBang = ptr,
+					let value = bindAtExec[Int(bitPattern: ptrBang)] else {
+					throw ODBCError.error("Could not find bound parameter")
+				}
+				switch value.value {
+				case var value as String:
+					try check(value.withUTF8 {
+						SQLPutData(hstmt, SQLPOINTER(mutating: $0.baseAddress), $0.count)
+					})
+				default:
+					throw ODBCError.error("Unusable bound parameter type")
+				}
+				rc = SQLParamData(hstmt, &ptr)
+			}
 		}
 		try check(rc)
 	}
@@ -207,17 +223,21 @@ extension ODBCStatement {
 	}
 	
 	public func bindParameter(number: Int, value: String?) throws {
-		if let value = value, let b = bindValues {
+		if var value = value, let b = bindValues {
 			let b = b.advanced(by: number-1)
-			b.withMemoryRebound(to: Int32.self, capacity: 1) {
-				$0.initialize(to: (SQL_DATA_AT_EXEC))
+			b.withMemoryRebound(to: Int.self, capacity: 1) {
+				p in
+				value.withUTF8 {
+					u in
+					p.initialize(to: Int(_SQL_LEN_DATA_AT_EXEC(Int32(u.count))))
+				}
 			}
 			bindAtExec[number] = .init(value: value, type: .varchar)
 			try check(SQLBindParameter(hstmt,
 										SQLUSMALLINT(number),
 										SQLSMALLINT(SQL_PARAM_INPUT),
-										ODBCDataType.varchar.rawValue,
-										ODBCDataType.varchar.rawValue,
+										ODBCDataType.cdefault.rawValue,
+										ODBCDataType.longvarchar.rawValue,
 										0, 0,
 										SQLPOINTER(bitPattern: number), 0, b))
 		} else {

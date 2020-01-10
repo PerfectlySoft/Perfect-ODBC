@@ -79,15 +79,6 @@ class PerfectODBCTests: XCTestCase {
 				let id: Int? = try s.getData(number: 1)
 				XCTAssertEqual(id, 1)
 			}
-			try s.closeCursor()
-			try s.bindParameter(number: 1, value: nil as Int?)
-			try s.execute()
-			while case .success = try s.fetch() {
-				let colDesc = try s.describeColumn(number: 1)
-				print("\(colDesc)")
-				let id: Int? = try s.getData(number: 1)
-				XCTAssertEqual(id, 1)
-			}
 		}
 		do {
 			let s = try c.prepare(statement: "SELECT COUNT(*) FROM \"TestTable1\" WHERE name = ?")
