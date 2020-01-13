@@ -196,6 +196,10 @@ extension ODBCStatement {
 					try check(value.withUTF8 {
 						SQLPutData(hstmt, SQLPOINTER(mutating: $0.baseAddress), $0.count)
 					})
+				case var value as Data:
+					try check(value.withUnsafeMutableBytes {
+						SQLPutData(hstmt, $0.baseAddress, $0.count)
+					})
 				case var value as [UInt8]:
 					try check(SQLPutData(hstmt, &value, value.count))
 				case var value as [Int8]:
@@ -203,7 +207,6 @@ extension ODBCStatement {
 				default:
 					throw ODBCError.error("Unusable bound parameter type")
 				}
-				rc = SQLParamData(hstmt, &ptr)
 			}
 		}
 		try check(rc)
@@ -216,7 +219,12 @@ extension ODBCStatement {
 			try b.advanced(by: number-1).withMemoryRebound(to: Int.self, capacity: 1) {
 				p in
 				p.initialize(to: SQLLEN(SQL_NULL_DATA))
-				try bind(number: number, valueType: valueType, paramType: paramType, ptr: p)
+				try check(SQLBindParameter(hstmt,
+											SQLUSMALLINT(number),
+											SQLSMALLINT(SQL_PARAM_INPUT),
+											valueType.rawValue,
+											paramType.rawValue,
+											0, 0, nil, 0, p))
 			}
 		}
 	}
@@ -251,6 +259,25 @@ extension ODBCStatement {
 										SQLPOINTER(bitPattern: number), 0, b))
 		} else {
 			try bindNull(number: number, valueType: .cdefault, paramType: .longvarchar)
+		}
+	}
+	public func bindParameter(number: Int, value: Data?) throws {
+		if let value = value, let b = bindValues {
+			let b = b.advanced(by: number-1)
+			b.withMemoryRebound(to: Int.self, capacity: 1) {
+				p in
+				p.initialize(to: Int(SQL_DATA_AT_EXEC))
+			}
+			bindAtExec[number] = .init(value: value, type: .longvarchar)
+			try check(SQLBindParameter(hstmt,
+										SQLUSMALLINT(number),
+										SQLSMALLINT(SQL_PARAM_INPUT),
+										ODBCDataType.cdefault.rawValue,
+										ODBCDataType.longvarbinary.rawValue,
+										0, 0,
+										SQLPOINTER(bitPattern: number), 0, b))
+		} else {
+			try bindNull(number: number, valueType: .cdefault, paramType: .longvarbinary)
 		}
 	}
 	public func bindParameter(number: Int, value: [UInt8]?) throws {
@@ -394,6 +421,17 @@ extension ODBCStatement {
 			try bindNull(number: number, valueType: .cstinyint, paramType: .char)
 		}
 	}
+	public func bindParameter(number: Int, value: Bool?) throws {
+		if let value = value, let b = bindValues {
+			try b.advanced(by: number-1).withMemoryRebound(to: Int8.self, capacity: 1) {
+				p in
+				p.initialize(to: value ? 1 : 0)
+				try bind(number: number, valueType: .cutinyint, paramType: .bit, ptr: p)
+			}
+		} else {
+			try bindNull(number: number, valueType: .cutinyint, paramType: .bit)
+		}
+	}
 	
 	public func bindParameter(number: Int, value: Double?) throws {
 		if let value = value, let b = bindValues {
@@ -411,10 +449,41 @@ extension ODBCStatement {
 			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
 				p in
 				p.initialize(to: value)
-				try bind(number: number, valueType: .float, paramType: .float, ptr: p)
+				try bind(number: number, valueType: .real, paramType: .real, ptr: p)
 			}
 		} else {
-			try bindNull(number: number, valueType: .float, paramType: .float)
+			try bindNull(number: number, valueType: .real, paramType: .real)
+		}
+	}
+	public func bindParameter(number: Int, value: UUID?) throws {
+		if let value = value, let b = bindValues {
+			let uuid = value.uuid
+			var sqlGUID = SQLGUID()
+			sqlGUID.Data1 = (UInt32(uuid.0) << 24) + (UInt32(uuid.1) << 16)
+			sqlGUID.Data1 += (UInt32(uuid.2) << 8) + UInt32(uuid.3)
+			sqlGUID.Data2 = (UInt16(uuid.4) << 8) + UInt16(uuid.5)
+			sqlGUID.Data3 = (UInt16(uuid.6) << 8) + UInt16(uuid.7)
+			sqlGUID.Data4 = (uuid.8, uuid.9, uuid.10, uuid.11, uuid.12, uuid.13, uuid.14, uuid.15)
+			var data = Data(count: MemoryLayout.size(ofValue: sqlGUID))
+			try check(data.withUnsafeMutableBytes {
+				uuPtr in
+				uuPtr.bindMemory(to: SQLGUID.self).initialize(repeating: sqlGUID)
+				return b.advanced(by: number-1).withMemoryRebound(to: SQLLEN.self, capacity: 1) {
+					lenPtr in
+					lenPtr.initialize(to: uuPtr.count)
+					return SQLBindParameter(hstmt,
+											SQLUSMALLINT(number),
+											SQLSMALLINT(SQL_PARAM_INPUT),
+											ODBCDataType.cdefault.rawValue,
+											ODBCDataType.guid.rawValue,
+											0, 0,
+											uuPtr.baseAddress, 0, lenPtr)
+				}
+			})
+			// this is not actually bound at exec but we keep the Data alive here
+			bindAtExec[number] = .init(value: data, type: ODBCDataType.guid)
+		} else {
+			try bindNull(number: number, valueType: .cdefault, paramType: .guid)
 		}
 	}
 }
@@ -427,6 +496,32 @@ extension ODBCStatement {
 			return nil
 		}
 		return Int(len)
+	}
+	public func getData(number: Int, buffer: Data, type: ODBCDataType = .cdefault) throws -> Int? {
+		var buffer = buffer
+		return try buffer.withUnsafeMutableBytes {
+			try getData(number: number, buffer: $0, type: type)
+		}
+	}
+	public func getData(number: Int, estimatedSize: Int = 256) throws -> Data? {
+		var firstBuff = Data(count: estimatedSize)
+		guard let fullLen = try getData(number: number, buffer: firstBuff, type: .binary) else {
+			return nil
+		}
+		if fullLen > estimatedSize {
+			var nextBuf = Data(count: fullLen)
+			nextBuf.append(firstBuff)
+			firstBuff = nextBuf
+			var len: SQLLEN = 0
+			try check(firstBuff.withUnsafeMutableBytes {
+				SQLGetData(hstmt, SQLUSMALLINT(number), ODBCDataType.binary.rawValue, $0.baseAddress!.advanced(by: estimatedSize-1), fullLen, &len)
+			})
+		}
+		if fullLen < firstBuff.count {
+			firstBuff.removeSubrange(Range(uncheckedBounds: (lower: fullLen, upper: firstBuff.count)))
+		}
+		assert(firstBuff.count == fullLen)
+		return firstBuff
 	}
 	public func getData(number: Int, estimatedSize: Int = 256, encoding: String.Encoding = .utf8) throws -> String? {
 		var firstBuff = UnsafeMutableRawBufferPointer.allocate(byteCount: estimatedSize, alignment: 0)
@@ -446,6 +541,13 @@ extension ODBCStatement {
 		}
 		return String(bytes: firstBuff[0..<fullLen], encoding: encoding)
 	}
+	
+	public func getData(number: Int) throws -> UUID? {
+		if let s: String = try getData(number: number) {
+			return UUID(uuidString: s)
+		}
+		return nil
+	}
 	public func getData(number: Int) throws -> Double? {
 		var len: SQLLEN = 0
 		var val: Double = 0.0
@@ -458,13 +560,22 @@ extension ODBCStatement {
 	public func getData(number: Int) throws -> Float? {
 		var len: SQLLEN = 0
 		var val: Float = 0.0
-		try check(SQLGetData(hstmt, SQLUSMALLINT(number), ODBCDataType.float.rawValue, &val, MemoryLayout.size(ofValue: val), &len))
+		try check(SQLGetData(hstmt, SQLUSMALLINT(number), ODBCDataType.real.rawValue, &val, MemoryLayout.size(ofValue: val), &len))
 		guard len != SQL_NULL_DATA else {
 			return nil
 		}
 		return val
 	}
 	
+	public func getData(number: Int) throws -> Bool? {
+		var len: SQLLEN = 0
+		var val: Int8 = 0
+		try check(SQLGetData(hstmt, SQLUSMALLINT(number), ODBCDataType.cstinyint.rawValue, &val, MemoryLayout.size(ofValue: val), &len))
+		guard len != SQL_NULL_DATA else {
+			return nil
+		}
+		return val == 1
+	}
 	public func getData(number: Int) throws -> Int8? {
 		var len: SQLLEN = 0
 		var val: Int8 = 0
