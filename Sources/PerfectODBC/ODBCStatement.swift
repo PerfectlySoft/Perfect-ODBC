@@ -8,6 +8,17 @@
 import Foundation
 import unixodbc
 
+extension SQLGUID {
+	init(_ uuid: uuid_t) {
+		self.init()
+		Data1 = (UInt32(uuid.0) << 24) + (UInt32(uuid.1) << 16)
+		Data1 += (UInt32(uuid.2) << 8) + UInt32(uuid.3)
+		Data2 = (UInt16(uuid.4) << 8) + UInt16(uuid.5)
+		Data3 = (UInt16(uuid.6) << 8) + UInt16(uuid.7)
+		Data4 = (uuid.8, uuid.9, uuid.10, uuid.11, uuid.12, uuid.13, uuid.14, uuid.15)
+	}
+}
+
 public class ODBCStatement: ODBCHandle {
 	struct BoundParameter {
 		let value: Any
@@ -457,13 +468,7 @@ extension ODBCStatement {
 	}
 	public func bindParameter(number: Int, value: UUID?) throws {
 		if let value = value, let b = bindValues {
-			let uuid = value.uuid
-			var sqlGUID = SQLGUID()
-			sqlGUID.Data1 = (UInt32(uuid.0) << 24) + (UInt32(uuid.1) << 16)
-			sqlGUID.Data1 += (UInt32(uuid.2) << 8) + UInt32(uuid.3)
-			sqlGUID.Data2 = (UInt16(uuid.4) << 8) + UInt16(uuid.5)
-			sqlGUID.Data3 = (UInt16(uuid.6) << 8) + UInt16(uuid.7)
-			sqlGUID.Data4 = (uuid.8, uuid.9, uuid.10, uuid.11, uuid.12, uuid.13, uuid.14, uuid.15)
+			let sqlGUID = SQLGUID(value.uuid)
 			var data = Data(count: MemoryLayout.size(ofValue: sqlGUID))
 			try check(data.withUnsafeMutableBytes {
 				uuPtr in
