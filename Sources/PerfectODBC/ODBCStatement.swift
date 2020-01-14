@@ -103,7 +103,8 @@ extension ODBCStatement {
 		return Int(count)
 	}
 	public func closeCursor() throws {
-		try check(SQLCloseCursor(hstmt))
+//		try check(SQLCloseCursor(hstmt))
+		try check(SQLFreeStmt(hstmt, SQLUSMALLINT(SQL_CLOSE)))
 	}
 	public func fetch() throws -> FetchResult {
 		let rc = SQLFetch(hstmt)
@@ -265,11 +266,11 @@ extension ODBCStatement {
 										SQLUSMALLINT(number),
 										SQLSMALLINT(SQL_PARAM_INPUT),
 										ODBCDataType.cdefault.rawValue, // pgsql driver, at least, requires this
-										ODBCDataType.longvarchar.rawValue,
+										ODBCDataType.varchar.rawValue,
 										0, 0,
 										SQLPOINTER(bitPattern: number), 0, b))
 		} else {
-			try bindNull(number: number, valueType: .cdefault, paramType: .longvarchar)
+			try bindNull(number: number, valueType: .cdefault, paramType: .varchar)
 		}
 	}
 	public func bindParameter(number: Int, value: Data?) throws {
@@ -279,16 +280,16 @@ extension ODBCStatement {
 				p in
 				p.initialize(to: Int(SQL_DATA_AT_EXEC))
 			}
-			bindAtExec[number] = .init(value: value, type: .longvarchar)
+			bindAtExec[number] = .init(value: value, type: .varbinary)
 			try check(SQLBindParameter(hstmt,
 										SQLUSMALLINT(number),
 										SQLSMALLINT(SQL_PARAM_INPUT),
 										ODBCDataType.cdefault.rawValue,
-										ODBCDataType.longvarbinary.rawValue,
+										ODBCDataType.varbinary.rawValue,
 										0, 0,
 										SQLPOINTER(bitPattern: number), 0, b))
 		} else {
-			try bindNull(number: number, valueType: .cdefault, paramType: .longvarbinary)
+			try bindNull(number: number, valueType: .cdefault, paramType: .varbinary)
 		}
 	}
 	public func bindParameter(number: Int, value: [UInt8]?) throws {
@@ -298,16 +299,16 @@ extension ODBCStatement {
 				p in
 				p.initialize(to: Int(SQL_DATA_AT_EXEC))
 			}
-			bindAtExec[number] = .init(value: value, type: .longvarchar)
+			bindAtExec[number] = .init(value: value, type: .varbinary)
 			try check(SQLBindParameter(hstmt,
 										SQLUSMALLINT(number),
 										SQLSMALLINT(SQL_PARAM_INPUT),
 										ODBCDataType.cdefault.rawValue,
-										ODBCDataType.longvarbinary.rawValue,
+										ODBCDataType.varbinary.rawValue,
 										0, 0,
 										SQLPOINTER(bitPattern: number), 0, b))
 		} else {
-			try bindNull(number: number, valueType: .cdefault, paramType: .longvarbinary)
+			try bindNull(number: number, valueType: .cdefault, paramType: .varbinary)
 		}
 	}
 	public func bindParameter(number: Int, value: [Int8]?) throws {
@@ -317,16 +318,16 @@ extension ODBCStatement {
 				p in
 				p.initialize(to: Int(SQL_DATA_AT_EXEC))
 			}
-			bindAtExec[number] = .init(value: value, type: .longvarchar)
+			bindAtExec[number] = .init(value: value, type: .varbinary)
 			try check(SQLBindParameter(hstmt,
 										SQLUSMALLINT(number),
 										SQLSMALLINT(SQL_PARAM_INPUT),
 										ODBCDataType.cdefault.rawValue,
-										ODBCDataType.longvarbinary.rawValue,
+										ODBCDataType.varbinary.rawValue,
 										0, 0,
 										SQLPOINTER(bitPattern: number), 0, b))
 		} else {
-			try bindNull(number: number, valueType: .cdefault, paramType: .longvarbinary)
+			try bindNull(number: number, valueType: .cdefault, paramType: .varbinary)
 		}
 	}
 	
@@ -415,10 +416,10 @@ extension ODBCStatement {
 			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
 				p in
 				p.initialize(to: value)
-				try bind(number: number, valueType: .cutinyint, paramType: .char, ptr: p)
+				try bind(number: number, valueType: .cstinyint, paramType: .tinyint, ptr: p)
 			}
 		} else {
-			try bindNull(number: number, valueType: .cutinyint, paramType: .char)
+			try bindNull(number: number, valueType: .cstinyint, paramType: .tinyint)
 		}
 	}
 	public func bindParameter(number: Int, value: UInt8?) throws {
@@ -426,15 +427,15 @@ extension ODBCStatement {
 			try b.advanced(by: number-1).withMemoryRebound(to: type(of: value), capacity: 1) {
 				p in
 				p.initialize(to: value)
-				try bind(number: number, valueType: .cstinyint, paramType: .char, ptr: p)
+				try bind(number: number, valueType: .cutinyint, paramType: .tinyint, ptr: p)
 			}
 		} else {
-			try bindNull(number: number, valueType: .cstinyint, paramType: .char)
+			try bindNull(number: number, valueType: .cutinyint, paramType: .tinyint)
 		}
 	}
 	public func bindParameter(number: Int, value: Bool?) throws {
 		if let value = value, let b = bindValues {
-			try b.advanced(by: number-1).withMemoryRebound(to: Int8.self, capacity: 1) {
+			try b.advanced(by: number-1).withMemoryRebound(to: UInt8.self, capacity: 1) {
 				p in
 				p.initialize(to: value ? 1 : 0)
 				try bind(number: number, valueType: .cutinyint, paramType: .bit, ptr: p)
@@ -467,26 +468,29 @@ extension ODBCStatement {
 		}
 	}
 	public func bindParameter(number: Int, value: UUID?) throws {
-		if let value = value, let b = bindValues {
-			let sqlGUID = SQLGUID(value.uuid)
-			var data = Data(count: MemoryLayout.size(ofValue: sqlGUID))
-			try check(data.withUnsafeMutableBytes {
-				uuPtr in
-				uuPtr.bindMemory(to: SQLGUID.self).initialize(repeating: sqlGUID)
-				return b.advanced(by: number-1).withMemoryRebound(to: SQLLEN.self, capacity: 1) {
-					lenPtr in
-					lenPtr.initialize(to: uuPtr.count)
-					return SQLBindParameter(hstmt,
-											SQLUSMALLINT(number),
-											SQLSMALLINT(SQL_PARAM_INPUT),
-											ODBCDataType.cdefault.rawValue,
-											ODBCDataType.guid.rawValue,
-											0, 0,
-											uuPtr.baseAddress, 0, lenPtr)
-				}
-			})
-			// this is not actually bound at exec but we keep the Data alive here
-			bindAtExec[number] = .init(value: data, type: ODBCDataType.guid)
+		if let value = value {//}, let b = bindValues {
+			try bindParameter(number: number, value: value.uuidString)
+			// using SQLGUID is not supported by MSSQL
+			// work in Postgres tho, but so does string conversion
+//			let sqlGUID = SQLGUID(value.uuid)
+//			var data = Data(count: MemoryLayout.size(ofValue: sqlGUID))
+//			try check(data.withUnsafeMutableBytes {
+//				uuPtr in
+//				uuPtr.bindMemory(to: SQLGUID.self).initialize(repeating: sqlGUID)
+//				return b.advanced(by: number-1).withMemoryRebound(to: SQLLEN.self, capacity: 1) {
+//					lenPtr in
+//					lenPtr.initialize(to: uuPtr.count)
+//					return SQLBindParameter(hstmt,
+//											SQLUSMALLINT(number),
+//											SQLSMALLINT(SQL_PARAM_INPUT),
+//											ODBCDataType.cdefault.rawValue,
+//											ODBCDataType.guid.rawValue,
+//											0, 0,
+//											uuPtr.baseAddress, 0, lenPtr)
+//				}
+//			})
+//			// this is not actually bound at exec but we keep the Data alive here
+//			bindAtExec[number] = .init(value: data, type: ODBCDataType.guid)
 		} else {
 			try bindNull(number: number, valueType: .cdefault, paramType: .guid)
 		}

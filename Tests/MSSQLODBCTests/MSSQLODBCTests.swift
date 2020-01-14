@@ -1,74 +1,93 @@
 import XCTest
 @testable import PerfectODBC
 
-// these tests assume a PostgreSQL ODBC driver is installed and can be accessed with un postgres and no pw
+// these tests assume a SQL Server ODBC driver is installed and can be accessed with
+// Database master, UID SA, and PWD <YourStrong@Passw0rd>
 let t1create =
 """
-CREATE TABLE "postgres_test" (
+CREATE TABLE "mssql_test" (
 	id bigint NOT NULL,
-	"byte" smallint,
+	"byte" tinyint,
 	"smallint" smallint,
-	"integer" integer,
+	"integer" int,
 	"bigint" bigint,
 	"real" real,
-	"double" double precision,
-	"text" text,
-	"bytea" bytea,
-	"boolean" boolean,
-	"uuid" uuid,
-	CONSTRAINT postgres_test_pkey PRIMARY KEY (id)
-) WITH (OIDS=FALSE);
+	"double" float,
+	"text" varchar(4000),
+	"bytea" varbinary(4096),
+	"boolean" bit,
+	"uuid" uniqueidentifier,
+	CONSTRAINT mssql_test_pkey PRIMARY KEY (id)
+);
 """
-
+let UID = "SA"
+let PWD = "<YourStrong@Passw0rd>"
+let DSN = "master"
 let numColumns = 11
 
-class PerfectODBCTests: XCTestCase {
+class MSSQLODBCTests: XCTestCase {
 	override func setUp() {
 		let env = ODBCEnvironment()
-		let c = try! env.connect(dsn: "PostgreSQL", user: "postgres", pass: "")
-		try! c.execute(statement: "DROP TABLE IF EXISTS \"postgres_test\"")
+		let c = try! env.connect(dsn: DSN, user: UID, pass: PWD)
+		try! c.execute(statement: "DROP TABLE IF EXISTS \"mssql_test\"")
 		try! c.execute(statement: t1create)
 	}
 	
 	override func tearDown() {
 //		let env = ODBCEnvironment()
-//		let c = try! env.connect(dsn: "PostgreSQL", user: "postgres", pass: "")
-//		try! c.execute(statement: "DROP TABLE IF EXISTS \"postgres_test\"")
+//		let c = try! env.connect(dsn: DSN, user: UID, pass: PWD)
+//		try! c.execute(statement: "DROP TABLE IF EXISTS \"mssql_test\"")
 	}
 	
-	func testConnection() throws {
+	func testConnectionMSSQL() throws {
 		let env = ODBCEnvironment()
-		let c = try env.connect(dsn: "PostgreSQL", user: "postgres", pass: "")
+		let c = try env.connect(dsn: DSN, user: UID, pass: PWD)
 		XCTAssertTrue(c.isAlive)
-		XCTAssert(c.driverVersion!.hasPrefix("12."))
-		XCTAssert(c.serverVersion!.hasPrefix("9."))
-		XCTAssertEqual(c.serverName, "PostgreSQL")
+		XCTAssert(c.driverVersion!.hasPrefix("17."))
+		XCTAssert(c.serverVersion!.hasPrefix("15."))
+		XCTAssertEqual(c.serverName, "Microsoft SQL Server")
 	}
 	
 	func testDataSources() {
 		let a = ODBCEnvironment().datasources()
-		XCTAssert(a.contains("PostgreSQL"))
+		XCTAssert(a.contains(DSN))
 	}
 	
 	func testTables() throws {
 		let env = ODBCEnvironment()
-		let c = try env.connect(dsn: "PostgreSQL", user: "postgres", pass: "")
+		let c = try env.connect(dsn: DSN, user: UID, pass: PWD)
 		let tables = try c.tables()
-		XCTAssert(tables.contains("postgres_test"))
+		XCTAssert(tables.contains("mssql_test"))
 	}
 	
 	func testParams() throws {
-		let testString = String(repeating: "0", count: 1024)
+		let testString = "🛹" +  String(repeating: "1", count: 1024)
 		let testData = Data(repeating: 0, count: 2048)
 		let testUUID = UUID()
 		
 		let env = ODBCEnvironment()
-		let c = try env.connect(dsn: "PostgreSQL", user: "postgres", pass: "")
+		let c = try env.connect(dsn: DSN, user: UID, pass: PWD)
+		
+//		do {
+//			let s = try c.prepare(statement:
+//				"""
+//				INSERT INTO "mssql_test"
+//					(id, "uuid")
+//					VALUES
+//					(?,?)
+//				""")
+//			// three rows: mins, maxs, nulls
+//			do {
+//				try s.bindParameter(number: 1, value: 0)
+//				try s.bindParameter(number: 2, value: testUUID)
+//			}
+//			try s.execute()
+//		}
 		
 		do {
 			let s = try c.prepare(statement:
 				"""
-				INSERT INTO "postgres_test"
+				INSERT INTO "mssql_test"
 					(id, "byte", "smallint", "integer", "bigint", "real",
 						"double", "text", "bytea", "boolean", "uuid")
 					VALUES
@@ -78,7 +97,7 @@ class PerfectODBCTests: XCTestCase {
 			// three rows: mins, maxs, nulls
 			do {
 				try s.bindParameter(number: 1, value: 1)
-				try s.bindParameter(number: 2, value: Int8.min)
+				try s.bindParameter(number: 2, value: UInt8.min)
 				try s.bindParameter(number: 3, value: Int16.min)
 				try s.bindParameter(number: 4, value: Int32.min)
 				try s.bindParameter(number: 5, value: Int64.min)
@@ -93,7 +112,7 @@ class PerfectODBCTests: XCTestCase {
 			try s.closeCursor()
 			do {
 				try s.bindParameter(number: 1, value: 2)
-				try s.bindParameter(number: 2, value: Int8.max)
+				try s.bindParameter(number: 2, value: UInt8.max)
 				try s.bindParameter(number: 3, value: Int16.max)
 				try s.bindParameter(number: 4, value: Int32.max)
 				try s.bindParameter(number: 5, value: Int64.max)
@@ -108,7 +127,7 @@ class PerfectODBCTests: XCTestCase {
 			try s.closeCursor()
 			do {
 				try s.bindParameter(number: 1, value: 3)
-				try s.bindParameter(number: 2, value: nil as Int8?)
+				try s.bindParameter(number: 2, value: nil as UInt8?)
 				try s.bindParameter(number: 3, value: nil as Int16?)
 				try s.bindParameter(number: 4, value: nil as Int32?)
 				try s.bindParameter(number: 5, value: nil as Int64?)
@@ -124,14 +143,14 @@ class PerfectODBCTests: XCTestCase {
 		do {
 			let s = try c.prepare(statement:
 				"""
-				SELECT * FROM "postgres_test" WHERE id = ?
+				SELECT * FROM "mssql_test" WHERE id = ?
 				""")
 			do {
 				try s.bindParameter(number: 1, value: 1)
 				try s.execute()
 				let fetchRes = try s.fetch()
 				XCTAssertEqual(fetchRes, .success)
-				XCTAssertEqual(Int8.min, try s.getData(number: 2))
+				XCTAssertEqual(UInt8.min, try s.getData(number: 2))
 				XCTAssertEqual(Int16.min, try s.getData(number: 3))
 				XCTAssertEqual(Int32.min, try s.getData(number: 4))
 				XCTAssertEqual(Int64.min, try s.getData(number: 5))
@@ -148,7 +167,7 @@ class PerfectODBCTests: XCTestCase {
 				try s.execute()
 				let fetchRes = try s.fetch()
 				XCTAssertEqual(fetchRes, .success)
-				XCTAssertEqual(Int8.max, try s.getData(number: 2))
+				XCTAssertEqual(UInt8.max, try s.getData(number: 2))
 				XCTAssertEqual(Int16.max, try s.getData(number: 3))
 				XCTAssertEqual(Int32.max, try s.getData(number: 4))
 				XCTAssertEqual(Int64.max, try s.getData(number: 5))
@@ -165,7 +184,7 @@ class PerfectODBCTests: XCTestCase {
 				try s.execute()
 				let fetchRes = try s.fetch()
 				XCTAssertEqual(fetchRes, .success)
-				XCTAssertEqual(nil as Int8?, try s.getData(number: 2))
+				XCTAssertEqual(nil as UInt8?, try s.getData(number: 2))
 				XCTAssertEqual(nil as Int16?, try s.getData(number: 3))
 				XCTAssertEqual(nil as Int32?, try s.getData(number: 4))
 				XCTAssertEqual(nil as Int64?, try s.getData(number: 5))

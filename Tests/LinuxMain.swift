@@ -1,6 +1,8 @@
 import XCTest
-@testable import PerfectODBCTests
+@testable import PostgresODBCTests
+@testable import MSSQLODBCTests
 
 XCTMain([
-     testCase(PerfectODBCTests.allTests),
+	testCase(PostgresODBCTests.allTests),
+	testCase(MSSQLODBCTests.allTests),
 ])

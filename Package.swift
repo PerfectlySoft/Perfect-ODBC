@@ -31,6 +31,7 @@ let package = Package(
 		.systemLibrary(name: "unixodbc",
 					   pkgConfig: "odbc",
 					   providers: [.brew(["unixodbc"])]),
-		.testTarget(name: "PerfectODBCTests", dependencies: ["PerfectODBC"])
+	   .testTarget(name: "PostgresODBCTests", dependencies: ["PerfectODBC"]),
+	   .testTarget(name: "MSSQLODBCTests", dependencies: ["PerfectODBC"])
 	]
 )
