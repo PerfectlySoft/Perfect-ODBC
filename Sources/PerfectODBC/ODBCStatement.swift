@@ -537,8 +537,12 @@ extension ODBCStatement {
 		defer {
 			firstBuff.deallocate()
 		}
-		guard let fullLen = try getData(number: number, buffer: firstBuff, type: .char) else {
+		guard let fullLen = try getData(number: number, buffer: firstBuff, type: .char),
+			fullLen >= 0 else {
 			return nil
+		}
+		if fullLen == 0 {
+			return ""
 		}
 		if fullLen > estimatedSize {
 			let nextBuf = UnsafeMutableRawBufferPointer.allocate(byteCount: fullLen, alignment: 0)

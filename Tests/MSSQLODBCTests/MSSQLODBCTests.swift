@@ -13,7 +13,7 @@ CREATE TABLE "mssql_test" (
 	"bigint" bigint,
 	"real" real,
 	"double" float,
-	"text" varchar(4000),
+	"text" varchar(4000) COLLATE Latin1_General_100_CI_AS_SC_UTF8,
 	"bytea" varbinary(4096),
 	"boolean" bit,
 	"uuid" uniqueidentifier,
